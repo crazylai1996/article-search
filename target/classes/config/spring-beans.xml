@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans  xmlns="http://www.springframework.org/schema/beans"  
+ xmlns:context="http://www.springframework.org/schema/context"  
+ xmlns:p="http://www.springframework.org/schema/p"  
+ xmlns:mvc="http://www.springframework.org/schema/mvc"  
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"  
+ xsi:schemaLocation="
+       http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+       http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+       http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop.xsd
+       http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd">
+	<!-- 引入properties文件 -->
+    <context:property-placeholder location="classpath*:properties/*.properties"/>
+    
+    <!-- redis连接池 -->
+    <bean id="poolConfig" class="redis.clients.jedis.JedisPoolConfig">
+        <property name="maxIdle" value="${redis.maxIdle}"/>
+        <property name="maxWaitMillis" value="${redis.maxWait}"/>
+        <property name="testOnBorrow" value="${redis.testOnBorrow}"/>
+    </bean>
+    
+    <!-- redis服务中心 -->
+    <bean id="connectionFactory" 
+        class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory">
+        <property name="poolConfig" ref="poolConfig"/>
+        <property name="hostName" value="${redis.host}"/>
+        <property name="port" value="${redis.port}"/>
+        <property name="password" value="${redis.auth}"/>
+        <property name="timeout" value="${redis.timeout}"/>
+	</bean>
+	
+	<!-- redis模板 -->
+	<bean id="redisTemplate" class="org.springframework.data.redis.core.RedisTemplate">
+	    <property name="connectionFactory" ref="connectionFactory" />
+	    <property name="keySerializer" >
+          <bean class="org.springframework.data.redis.serializer.StringRedisSerializer" />
+      	</property>
+      	<!-- JdkSerializationRedisSerializer用于类的序列化 -->
+      	<property name="valueSerializer" >
+          <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer" />
+      	</property>
+	</bean>
+	
+    <!-- 数据库连接池 -->
+    <bean id="dataSource" class="com.alibaba.druid.pool.DruidDataSource">
+        <property name="driverClassName" value="${mysql.driver}"/>
+        <property name="url" value="${mysql.url}"/>
+        <property name="username" value="${mysql.user}"/>
+        <property name="password" value="${mysql.password}"/>
+        <!-- 配置初始化连接数大小初始化、最小闲置数、最大连接数 -->
+        <property name="initialSize" value="${druid.initialSize}"/>
+        <property name="minIdle" value="${druid.minIdle}"/>
+        <property name="maxActive" value="${druid.maxActive}"/>
+        <!-- 配置获取连接等待超时的时间 -->
+        <property name="maxWait" value="${druid.maxWait}"/>
+    </bean>
+    <bean id="sqlSessionFactory" class="org.mybatis.spring.SqlSessionFactoryBean">
+		<!--dataSource属性指定要用到的连接池-->
+		<property name="dataSource" ref="dataSource" />
+		<!--configLocation属性指定mybatis的核心配置文件-->
+		<property name="configLocation" value="classpath:config/mybatis-config.xml" />
+	</bean>
+	
+	<!-- 扫描mapper文件生成dao组件 -->
+	<bean class="org.mybatis.spring.mapper.MapperScannerConfigurer">
+		<property name="basePackage" value="com.search.mapper" />
+		<property name="sqlSessionFactoryBeanName" value="sqlSessionFactory" />
+	</bean>
+	
+	<!-- 扫描生成service组件 -->
+	<context:component-scan base-package="com.search.service"/>
+	
+	<!-- redis工具 -->
+	<bean id="redisManager" class="com.search.utils.RedisManager"/>
+	<!-- lucene工具 -->
+	<bean id="luceneManager" class="com.search.utils.LuceneUtil"/>
+	
+	<!-- 定时任务 -->
+	<!-- redis定时同步任务 -->
+	<bean id="redisSync" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+	    <property name="targetObject" ref="redisManager"/>
+	    <property name="targetMethod" value="redisSync"/>
+	</bean>
+	<!-- 触发器, 使用定时触发 -->
+    <bean id="redisTrigger"
+        class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+        <property name="jobDetail" ref="redisSync" />
+        <property name="cronExpression" value="0 0 0 * * ?" /><!-- 每天零点调度一次 -->
+    </bean>
+	<!-- lucene索引定时同步任务  -->
+	<bean id="indexSync" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+	    <property name="targetObject" ref="luceneManager"/>
+	    <property name="targetMethod" value="indexSync"/>
+	</bean>
+	<!-- 触发器, 使用定时触发 -->
+    <bean id="luceneTrigger" class="org.springframework.scheduling.quartz.SimpleTriggerFactoryBean">
+        <property name="jobDetail" ref="indexSync" />
+        <property name="startDelay" value="60000" /><!-- 调度工厂实例化后，经过60s开始执行调度 -->
+        <property name="repeatInterval" value="7200000" /><!-- 每2小时调度一次 -->
+    </bean>
+    <!-- 配置调度工厂 -->
+    <bean class="org.springframework.scheduling.quartz.SchedulerFactoryBean">
+        <property name="triggers">
+            <list>
+                <ref bean="redisTrigger" />
+                <ref bean="luceneTrigger" />
+            </list>
+        </property>
+    </bean>
+    
+ </beans>
